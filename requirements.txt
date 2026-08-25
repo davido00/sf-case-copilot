@@ -1,0 +1,9 @@
+# Step 1 — raw Claude API calls
+anthropic>=0.69
+python-dotenv>=1.0
+
+# Added in later steps (uncommented as we get there):
+# langchain>=0.3            # Step 2
+# langchain-anthropic>=0.3  # Step 2
+# simple-salesforce>=1.12   # Step 6
+# pytest>=8.0               # tests
