@@ -35,6 +35,14 @@ Notes for future sessions:
 - Adaptive thinking is **on by default** on `claude-opus-5` — do not pass
   `budget_tokens` (it returns a 400 on this model).
 - `max_tokens` is a *ceiling*, not a target. It does not increase cost by itself.
+- Because thinking is on, a reply's `content` is a **list of blocks**, not a
+  string — in both the raw SDK and LangChain. Use `AIMessage.text` (a property,
+  not a method, in langchain-core 1.x) or a `StrOutputParser` in a chain.
+- `langchain-anthropic` pins `anthropic<1.0.0`, so this project stays on the
+  0.12x SDK. `requirements.txt` pins it explicitly; without the pin, installing
+  LangChain silently downgrades `anthropic`.
+- Git identity is set **repo-locally** (`.git/config`), not globally, and is
+  deliberately kept that way.
 
 ## Structure
 
@@ -48,6 +56,7 @@ sf-case-copilot/
 │   └── sample_cases.json # mock Cases + Knowledge Articles (Step 3)
 ├── src/
 │   ├── step1_raw_claude.py  # Step 1: raw API call, no framework
+│   ├── step2_langchain.py   # Step 2: same call via LangChain + a chain
 │   ├── sf_client.py         # simple-salesforce wrapper (Step 6)
 │   ├── tools.py             # LangChain tool definitions (Step 5)
 │   ├── agent.py             # the agent loop (Step 5)
@@ -61,9 +70,9 @@ Done one at a time, checking in between each.
 
 | Step | Goal | Status |
 |---|---|---|
-| 1 | Raw Claude API call from a simple script — no framework | **in progress** |
-| 2 | Wrap it in LangChain; show what the framework adds | todo |
-| 3 | Realistic mock data: ~10 Cases, ~5 Knowledge Articles as JSON | todo |
+| 1 | Raw Claude API call from a simple script — no framework | **done** |
+| 2 | Wrap it in LangChain; show what the framework adds | **done** |
+| 3 | Realistic mock data: ~10 Cases, ~5 Knowledge Articles as JSON | **next** |
 | 4 | Simple retrieval: given a Case, find the most relevant Article(s) | todo |
 | 5 | Tools (`search_knowledge_articles`, `get_case`, `draft_resolution`) + agent loop | todo |
 | 6 | Swap mock data for a real Salesforce connection (Trailhead Dev org) | todo |
@@ -73,5 +82,6 @@ Done one at a time, checking in between each.
 
 ```bash
 source .venv/bin/activate
-python src/step1_raw_claude.py
+python src/step1_raw_claude.py   # Step 1: raw SDK
+python src/step2_langchain.py    # Step 2: LangChain (makes 3 API calls)
 ```
