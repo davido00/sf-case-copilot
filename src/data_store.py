@@ -1,49 +1,97 @@
 """
-Reads the mock Salesforce data in data/sample_cases.json.
+Where Cases and Knowledge Articles come from.
 
-This module exists to be a SEAM. Every later step asks for Cases and Articles
-through these functions instead of touching the JSON file directly. In Step 6
-we rewrite the insides of these functions to call Salesforce, and nothing that
-depends on them has to change.
+This is the SEAM. Everything else in the project -- retrieval, the tools, the
+agent -- asks for data through these five functions and has no idea whether the
+answer came from a JSON file or from a live Salesforce org.
 
-That is the same instinct as putting SOQL behind a selector class in Apex
-rather than scattering queries through your triggers.
+Set DATA_SOURCE in .env to switch:
+    DATA_SOURCE=mock         (default) read data/sample_cases.json
+    DATA_SOURCE=salesforce   query the org configured by the SF_* variables
+
+Nothing downstream changes. That is the entire point of having built it this
+way in Step 3, and it means you can develop offline for free and then point the
+same agent at a real org.
 """
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 
-# Path to the JSON, worked out relative to THIS file rather than to whatever
-# directory you happen to run python from. `__file__` is this file's path, so
-# .parent is src/, and .parent.parent is the repo root.
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "mock").strip().lower()
+
 DATA_FILE = Path(__file__).parent.parent / "data" / "sample_cases.json"
 
 
-@lru_cache(maxsize=1)
-def _load() -> dict:
-    """Read and parse the JSON file.
+def using_salesforce() -> bool:
+    """True when we are pointed at a real org rather than the JSON file."""
+    return DATA_SOURCE == "salesforce"
 
-    `@lru_cache` means the file is read from disk once; every call after the
-    first gets the same parsed dict back. Cheap, and it keeps the rest of the
-    module from worrying about when to load.
-    """
+
+# ---------------------------------------------------------------------------
+# Mock backend -- the JSON file
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _load_json() -> dict:
+    """Read and parse the mock data once per process."""
     with open(DATA_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 
+# ---------------------------------------------------------------------------
+# Salesforce backend -- cached so one run does not re-query for every search
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _sf_cases() -> tuple[dict, ...]:
+    # Imported here, not at the top, so that mock mode never needs
+    # simple-salesforce or a .env full of credentials.
+    import sf_client
+
+    return tuple(sf_client.fetch_cases())
+
+
+@lru_cache(maxsize=1)
+def _sf_articles() -> tuple[dict, ...]:
+    import sf_client
+
+    return tuple(sf_client.fetch_articles())
+
+
+# ---------------------------------------------------------------------------
+# The public interface. These five functions are all anything else may call.
+# ---------------------------------------------------------------------------
+
+
 def list_cases() -> list[dict]:
-    """Every Case in the mock data."""
-    return _load()["cases"]
+    """Every Case available from the current data source."""
+    if using_salesforce():
+        return list(_sf_cases())
+    return _load_json()["cases"]
 
 
 def get_case(case_number: str) -> dict | None:
     """One Case by its CaseNumber, or None if there is no such Case.
 
-    Returning None rather than raising is deliberate: in Step 5 the agent will
-    call this as a tool, and 'that case does not exist' is an answer the model
-    needs to be able to receive and act on, not a crash.
+    Returning None rather than raising is deliberate: the agent calls this as
+    a tool, and "that case does not exist" is an answer the model needs to be
+    able to receive and act on, not a crash.
     """
+    if using_salesforce():
+        # Ask the org directly rather than scanning the cached page of cases --
+        # the case we want may be older than the LIMIT we fetched.
+        import sf_client
+
+        return sf_client.fetch_case(case_number)
+
     for case in list_cases():
         if case["CaseNumber"] == case_number:
             return case
@@ -51,8 +99,10 @@ def get_case(case_number: str) -> dict | None:
 
 
 def list_articles() -> list[dict]:
-    """Every Knowledge Article in the mock data."""
-    return _load()["knowledge_articles"]
+    """Every published Knowledge Article from the current data source."""
+    if using_salesforce():
+        return list(_sf_articles())
+    return _load_json()["knowledge_articles"]
 
 
 def get_article(article_number: str) -> dict | None:
@@ -64,10 +114,69 @@ def get_article(article_number: str) -> dict | None:
 
 
 def ground_truth() -> dict[str, list[str]]:
-    """Which articles SHOULD match each case. Test scaffolding, not SF data.
+    """Which articles SHOULD match each case. Mock data only.
 
-    Step 4 uses this to measure whether retrieval actually works, instead of
-    us reading the output and deciding it looks about right.
+    This is test scaffolding we wrote in Step 3, not Salesforce data, so a real
+    org has nothing to offer here and returns an empty mapping.
     """
-    raw = _load()["_eval_ground_truth"]
+    if using_salesforce():
+        return {}
+    raw = _load_json()["_eval_ground_truth"]
     return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+# ---------------------------------------------------------------------------
+# Writing drafts back (Step 7)
+#
+# Reads had a seam; writes get one too. The agent calls save_draft() and does
+# not know whether the draft landed in a Python dict or on a real Case.
+# ---------------------------------------------------------------------------
+
+# What was saved this session, keyed by CaseNumber. In mock mode this IS the
+# storage; in Salesforce mode it is just a local record of what we wrote, so
+# the CLI can show it back without another round trip.
+_SAVED: dict[str, dict] = {}
+
+
+def save_draft(case_number: str, draft_text: str) -> dict:
+    """Save a drafted resolution against a Case.
+
+    Returns {"ok": bool, "detail": str} -- a sentence the agent can read,
+    never an exception, for the same reason the read tools work that way.
+    """
+    case = get_case(case_number)
+    if case is None:
+        return {"ok": False, "detail": f"No case found with number {case_number}."}
+
+    if not draft_text.strip():
+        return {"ok": False, "detail": "The draft was empty, so nothing was saved."}
+
+    if using_salesforce():
+        import sf_client
+
+        try:
+            result = sf_client.create_case_comment(case["Id"], draft_text)
+        except Exception as exc:
+            # Surface the org's own message -- it names the field or rule that
+            # rejected the write, which is what a person needs to fix it.
+            return {"ok": False, "detail": f"Salesforce rejected the write: {exc}"}
+
+        _SAVED[case_number] = {"text": draft_text, "comment_id": result["id"]}
+        detail = (
+            f"Saved as an internal Case Comment on case {case_number} "
+            f"(comment {result['id']}, not visible to the customer)."
+        )
+        if result["truncated"]:
+            detail += " NOTE: the draft exceeded 4000 characters and was truncated."
+        return {"ok": True, "detail": detail}
+
+    _SAVED[case_number] = {"text": draft_text, "comment_id": None}
+    return {
+        "ok": True,
+        "detail": f"Draft saved locally against case {case_number} (mock mode).",
+    }
+
+
+def saved_drafts() -> dict[str, dict]:
+    """Everything saved this session, for the CLI to display."""
+    return _SAVED

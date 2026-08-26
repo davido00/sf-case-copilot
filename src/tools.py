@@ -18,11 +18,6 @@ from langchain_core.tools import tool
 import data_store
 import retrieval
 
-# Where drafts go for now. In Step 7 this is replaced by a write back to the
-# Case record in Salesforce; keeping it in a plain dict means we can build and
-# debug the whole agent without touching a real org.
-DRAFTS: dict[str, str] = {}
-
 
 @tool
 def get_case(case_number: str) -> str:
@@ -96,15 +91,19 @@ def draft_resolution(case_number: str, draft_text: str) -> str:
     full draft text. Only call it after you have read the case and searched the
     knowledge base.
 
-    The draft is saved for a human support agent to review before it is sent to
-    the customer -- it is never sent automatically.
+    The draft is saved as an INTERNAL comment on the Case for a human support
+    agent to review. It is not visible to the customer and is never sent
+    automatically. Keep it under 4000 characters or it will be truncated.
     """
-    if data_store.get_case(case_number) is None:
-        return f"Cannot save a draft: no case found with number {case_number}."
+    result = data_store.save_draft(case_number, draft_text)
 
-    DRAFTS[case_number] = draft_text
+    if not result["ok"]:
+        # A sentence, not an exception -- the model can read this and retry
+        # with a shorter draft or a corrected case number.
+        return result["detail"]
+
     words = len(draft_text.split())
-    return f"Draft saved against case {case_number} ({words} words), pending agent review."
+    return f"{result['detail']} ({words} words, pending agent review.)"
 
 
 # The list we hand to the agent. Order does not matter to the model -- it picks

@@ -14,7 +14,6 @@ Commands: cases | drafts | reset | quit
 
 import agent as agent_module
 import data_store
-import tools
 from step5_agent import print_trace
 
 BANNER = """
@@ -44,12 +43,13 @@ def show_cases() -> None:
 
 def show_drafts() -> None:
     """Print whatever the agent has saved so far this session."""
-    if not tools.DRAFTS:
+    if not data_store.saved_drafts():
         print("  (no drafts saved yet)")
         return
-    for number, draft in tools.DRAFTS.items():
-        print(f"\n  --- case {number} ---")
-        for line in draft.splitlines():
+    for number, entry in data_store.saved_drafts().items():
+        where = f" (Case Comment {entry['comment_id']})" if entry["comment_id"] else ""
+        print(f"\n  --- case {number}{where} ---")
+        for line in entry["text"].splitlines():
             print(f"  {line}")
 
 

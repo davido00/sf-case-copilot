@@ -16,7 +16,7 @@ import sys
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 import agent as agent_module
-import tools
+import data_store
 
 
 def shorten(text: str, limit: int = 240) -> str:
@@ -69,9 +69,10 @@ def main() -> None:
     print("=" * 78)
     print("SAVED DRAFTS")
     print("=" * 78)
-    if tools.DRAFTS:
-        for number, draft in tools.DRAFTS.items():
-            print(f"\n--- case {number} ---\n{draft}")
+    if data_store.saved_drafts():
+        for number, entry in data_store.saved_drafts().items():
+            where = f" (Case Comment {entry['comment_id']})" if entry["comment_id"] else ""
+            print(f"\n--- case {number}{where} ---\n{entry['text']}")
     else:
         print("(none -- the agent chose not to save a draft)")
 

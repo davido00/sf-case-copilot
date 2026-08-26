@@ -8,6 +8,8 @@ python-dotenv>=1.0
 langchain>=1.3
 langchain-anthropic>=1.6
 
+# Step 6 — Salesforce
+simple-salesforce>=1.12
+
 # Added in later steps (uncommented as we get there):
-# simple-salesforce>=1.12   # Step 6
 # pytest>=8.0               # tests

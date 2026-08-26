@@ -61,6 +61,7 @@ sf-case-copilot/
 │   ├── step4_retrieval.py   # Step 4: scores retrieval against ground truth
 │   ├── step5_agent.py       # Step 5: runs the agent, prints the loop trace
 │   ├── chat.py              # interactive sandbox for the agent (multi-turn)
+│   ├── step6_salesforce.py  # Step 6: org connection smoke test (no LLM calls)
 │   ├── data_store.py        # reads the mock JSON — the SEAM Step 6 replaces
 │   ├── retrieval.py         # keyword + IDF article search (Step 4)
 │   ├── sf_client.py         # simple-salesforce wrapper (Step 6)
@@ -81,8 +82,8 @@ Done one at a time, checking in between each.
 | 3 | Realistic mock data: ~10 Cases, ~5 Knowledge Articles as JSON | **done** |
 | 4 | Simple retrieval: given a Case, find the most relevant Article(s) | **done** |
 | 5 | Tools (`search_knowledge_articles`, `get_case`, `draft_resolution`) + agent loop | **done** |
-| 6 | Swap mock data for a real Salesforce connection (Trailhead Dev org) | **next** |
-| 7 | Tool that writes the drafted resolution back to the Case record | todo |
+| 6 | Swap mock data for a real Salesforce connection (Trailhead Dev org) | **done** |
+| 7 | Tool that writes the drafted resolution back to the Case record | **done** |
 
 ## Running
 
@@ -95,7 +96,55 @@ python src/step4_retrieval.py     # Step 4: retrieval + scoring (free)
 python src/step5_agent.py         # Step 5: agent on case 00001042
 python src/step5_agent.py 00001051  # Step 5: the no-matching-article path
 python src/chat.py                # interactive: type anything, multi-turn
+
+# Step 6 — against a real org (no LLM calls in the smoke test)
+DATA_SOURCE=salesforce python src/step6_salesforce.py
+DATA_SOURCE=salesforce python src/chat.py
 ```
+
+## Switching data sources (Step 6)
+
+`DATA_SOURCE=mock` (default) reads the JSON. `DATA_SOURCE=salesforce` queries the
+org. `data_store.py` is the only file that knows the difference — `retrieval.py`,
+`tools.py` and `agent.py` are untouched by the swap.
+
+`sf_client.py` normalises SOQL rows into **exactly** the mock dict shape, including
+mapping whatever the org calls its Knowledge body field onto the key `Answer__c`
+(set `SF_KNOWLEDGE_BODY_FIELD`). Keep that normalisation intact — it is what makes
+the seam work.
+
+Two real-org gotchas already handled: article bodies are HTML and go through
+`strip_html()` (otherwise the tokenizer indexes `div` and `strong` as words), and
+the article query filters `PublishStatus = 'Online'` — **newly created articles are
+Drafts and will not appear until published.**
+
+### Auth (learned the hard way)
+
+New orgs **disable SOAP `login()` by default**, and even once enabled it needs the
+*Use Any API Auth* permission; Salesforce retires it entirely in Summer '27. So
+`sf_client.get_connection()` prefers `SF_ACCESS_TOKEN` + `SF_INSTANCE_URL` (plain
+OAuth, from `sf org display --json`) and only falls back to username/password.
+Access tokens expire — `INVALID_SESSION_ID` on a previously working setup means
+re-run `sf org display` and paste the new token.
+
+### Verified against the live org
+
+4/4 correct with `MIN_SCORE = 9.0` untouched: the login case matched its article
+at 38.6, and the three unrelated Trailhead sample cases (electrical wiring,
+generator, rotor) all scored ≤ 1.6 and correctly returned nothing.
+
+## Writing back (Step 7)
+
+`draft_resolution` writes a **CaseComment** with `IsPublished = false` — internal,
+never customer-visible. That default is deliberate: everything the agent produces
+awaits human review, so auto-publishing to the portal would defeat the design.
+`CommentBody` caps at 4000 chars; longer drafts are cut at a word boundary and
+marked, and the tool tells the model it was truncated.
+
+Writes go through `data_store.save_draft()`, the same seam as reads — mock mode
+keeps drafts in a dict, Salesforce mode creates the comment. Verified live on case
+00001026 (comment `00ad200000KhAbjAAF`, `IsPublished: False`), and verified that a
+case with no matching article writes **nothing**.
 
 ## The agent (Step 5)
 
