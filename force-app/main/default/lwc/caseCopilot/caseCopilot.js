@@ -102,7 +102,9 @@ export default class CaseCopilot extends LightningElement {
         try {
             await saveResolutionToCase({
                 caseId: this.recordId,
-                resolutionText: message.text
+                // Save the de-marked-up version. A Long Text Area field shows
+                // "**bold**" as literal asterisks, same as the chat panel did.
+                resolutionText: message.plainText
             });
 
             this.dispatchEvent(
@@ -141,6 +143,12 @@ export default class CaseCopilot extends LightningElement {
                 id,
                 role,
                 text,
+                // Three forms of the same content, each for a different job:
+                //   text      -> what goes back to the agent as history
+                //   html      -> what the user reads (markdown rendered)
+                //   plainText -> what gets written to the Case field
+                html: this.toRichText(text),
+                plainText: this.toPlainText(text),
                 isAssistant,
                 // Precomputed because templates cannot call functions.
                 cssClass: isAssistant ? 'bubble bubble_agent' : 'bubble bubble_user',
@@ -166,6 +174,93 @@ export default class CaseCopilot extends LightningElement {
             return `Searched the knowledge base ${searches} times`;
         }
         return 'Looked up case details';
+    }
+
+    /**
+     * Render the agent's markdown as the small HTML subset that
+     * lightning-formatted-rich-text will display.
+     *
+     * The model writes markdown because that is how models write. The platform
+     * has no markdown renderer, so without this the user reads raw asterisks.
+     * This handles what the agent actually produces -- bold, bullet and
+     * numbered lists, headings, rules -- and nothing more.
+     */
+    toRichText(source) {
+        // Escape FIRST. Everything after this point adds our own tags, so any
+        // angle brackets in the agent's text are already inert.
+        const escaped = String(source || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+
+        const out = [];
+        let openList = null;
+
+        const closeList = () => {
+            if (openList) {
+                out.push(`</${openList}>`);
+                openList = null;
+            }
+        };
+
+        escaped.split('\n').forEach((rawLine) => {
+            const line = rawLine.trim();
+
+            if (!line || /^([-*_])\1{2,}$/.test(line)) {
+                // Blank line, or a horizontal rule the agent likes to draw.
+                closeList();
+                return;
+            }
+
+            const ordered = line.match(/^(\d+)[.)]\s+(.*)$/);
+            const bullet = line.match(/^[-*•]\s+(.*)$/);
+            const heading = line.match(/^#{1,6}\s+(.*)$/);
+
+            if (ordered) {
+                if (openList !== 'ol') {
+                    closeList();
+                    out.push('<ol>');
+                    openList = 'ol';
+                }
+                out.push(`<li>${this.inlineMarkup(ordered[2])}</li>`);
+            } else if (bullet) {
+                if (openList !== 'ul') {
+                    closeList();
+                    out.push('<ul>');
+                    openList = 'ul';
+                }
+                out.push(`<li>${this.inlineMarkup(bullet[1])}</li>`);
+            } else if (heading) {
+                closeList();
+                out.push(`<p><strong>${this.inlineMarkup(heading[1])}</strong></p>`);
+            } else {
+                closeList();
+                out.push(`<p>${this.inlineMarkup(line)}</p>`);
+            }
+        });
+
+        closeList();
+        return out.join('');
+    }
+
+    /** Bold, italic and inline code within a single line. */
+    inlineMarkup(line) {
+        return line
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>')
+            .replace(/`([^`]+)`/g, '<strong>$1</strong>');
+    }
+
+    /** Strip the markdown markers, keeping the words and the line breaks. */
+    toPlainText(source) {
+        return String(source || '')
+            .replace(/^#{1,6}\s+/gm, '')
+            .replace(/\*\*([^*]+)\*\*/g, '$1')
+            .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, '$1$2')
+            .replace(/`([^`]+)`/g, '$1')
+            .replace(/^([-*_])\1{2,}$/gm, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
     }
 
     /** Aura errors arrive in several shapes. Get to the sentence. */

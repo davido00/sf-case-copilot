@@ -15,9 +15,9 @@
                     <template for:each={decoratedMessages} for:item="msg">
                         <div key={msg.id} class={msg.rowClass}>
                             <div class={msg.cssClass}>
-                                <lightning-formatted-text
-                                    value={msg.text}
-                                ></lightning-formatted-text>
+                                <lightning-formatted-rich-text
+                                    value={msg.html}
+                                ></lightning-formatted-rich-text>
 
                                 <template lwc:if={msg.isAssistant}>
                                     <div class="meta">

@@ -23,11 +23,41 @@
     max-width: 85%;
     padding: 0.5rem 0.75rem;
     border-radius: 0.5rem;
-    /* The agent replies in plain text with real line breaks; keep them. */
-    white-space: pre-wrap;
     word-break: break-word;
     font-size: 0.85rem;
     line-height: 1.45;
+}
+
+/* The agent's reply is now real markup, so tame the default block spacing.
+   Without this every paragraph and list gets browser default margins and the
+   bubble becomes mostly whitespace. */
+.bubble_agent p {
+    margin: 0 0 0.5rem 0;
+}
+.bubble_agent p:last-child {
+    margin-bottom: 0;
+}
+.bubble_agent ul,
+.bubble_agent ol {
+    margin: 0 0 0.5rem 0;
+    padding-left: 1.25rem;
+}
+.bubble_agent ul {
+    list-style: disc;
+}
+.bubble_agent ol {
+    list-style: decimal;
+}
+.bubble_agent li {
+    margin-bottom: 0.2rem;
+}
+.bubble_agent strong {
+    font-weight: 700;
+}
+
+/* User messages are still plain text typed into a textarea. */
+.bubble_user {
+    white-space: pre-wrap;
 }
 .bubble_user {
     background: #0176d3;
