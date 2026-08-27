@@ -190,6 +190,34 @@ optimise against them.
 ~22s with an article, ~17s when refusing. The Apex callout ceiling is 120s, so
 sync works — but it was 51s before the fix, which is how close this gets.
 
+## Deployment (in-org build, phase 2)
+
+Live at **https://sf-case-copilot.onrender.com** — Render free tier, Frankfurt,
+configured by `render.yaml` (a Blueprint, so the deploy is version-controlled
+rather than dashboard clicks). Free tier **sleeps after ~15 min idle**; the first
+call after that takes ~40s.
+
+Auth: this deployment uses **username + password + security token**, not an OAuth
+access token. The security token does not expire on its own (only when the
+password changes), which makes it the more durable choice for a long-running
+service — even though it goes through the SOAP `login()` endpoint, which needed
+enabling in Setup and the *Use Any API Auth* permission.
+
+`/healthz` is liveness only and is what Render's health check points at.
+`/health` also checks Salesforce — deliberately NOT the health check, because an
+expired credential would make Render restart-loop an app that restarting cannot fix.
+
+Testing: `service/try_chat.py` is a terminal client for `/chat`, and reads
+`COPILOT_URL` so the same script tests local or deployed:
+
+```bash
+COPILOT_URL=https://sf-case-copilot.onrender.com python service/try_chat.py <caseId>
+```
+
+It is also the **reference implementation for the LWC** — keep a list of
+`{role, content}`, send it all each turn, append the reply. That is the whole
+protocol.
+
 ## The agent (Step 5)
 
 `create_agent` (LangChain 1.x, LangGraph underneath) writes the tool loop.
