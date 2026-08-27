@@ -21,13 +21,24 @@ services:
       - key: SF_KNOWLEDGE_BODY_FIELD
         value: Answer__c
 
+      - key: SF_DOMAIN
+        value: login
+
       # sync:false = Render prompts for these and stores them encrypted.
-      # None of them are ever committed.
+      # None of them are ever committed. Copy the values from your local .env.
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: COPILOT_SHARED_SECRET
         sync: false
-      - key: SF_ACCESS_TOKEN
+
+      # Salesforce auth. This project uses username + password + security
+      # token, which does NOT expire (the token changes only when the password
+      # does). The alternative is SF_ACCESS_TOKEN + SF_INSTANCE_URL from
+      # `sf org display --json`, which avoids SOAP but expires within hours --
+      # fine for local work, poor for a deployed service.
+      - key: SF_USERNAME
         sync: false
-      - key: SF_INSTANCE_URL
+      - key: SF_PASSWORD
+        sync: false
+      - key: SF_SECURITY_TOKEN
         sync: false
