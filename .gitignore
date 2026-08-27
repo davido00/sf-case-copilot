@@ -16,3 +16,7 @@ venv/
 *.key
 *.pem
 *.crt
+
+# Salesforce CLI local state — machine-specific, not project config
+.sf/
+.sfdx/
