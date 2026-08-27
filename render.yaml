@@ -1,0 +1,33 @@
+# Render Blueprint. Lets the deployment be reviewed and version-controlled
+# instead of living only as clicks in a dashboard.
+#
+# In Render: New > Blueprint > pick this repo. It reads this file, then prompts
+# for the four secrets below (sync:false means "ask me, never store in git").
+services:
+  - type: web
+    name: sf-case-copilot
+    runtime: python
+    plan: free           # sleeps after ~15 min idle; first call after that is slow
+    region: frankfurt    # closest to Poland; change if you prefer
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn service.app:app --host 0.0.0.0 --port $PORT
+
+    # Liveness only. Deliberately NOT /health -- see the docstring on /healthz.
+    healthCheckPath: /healthz
+
+    envVars:
+      - key: DATA_SOURCE
+        value: salesforce
+      - key: SF_KNOWLEDGE_BODY_FIELD
+        value: Answer__c
+
+      # sync:false = Render prompts for these and stores them encrypted.
+      # None of them are ever committed.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: COPILOT_SHARED_SECRET
+        sync: false
+      - key: SF_ACCESS_TOKEN
+        sync: false
+      - key: SF_INSTANCE_URL
+        sync: false

@@ -275,3 +275,34 @@ def fetch_case_comments(case_id: str, limit: int = 10) -> list[dict]:
         f"ORDER BY CreatedDate DESC LIMIT {int(limit)}"
     )
     return sf.query_all(soql)["records"]
+
+
+def update_case_comment(comment_id: str, body: str) -> dict:
+    """Overwrite an existing comment. Returns {"truncated": bool}.
+
+    Exists so a re-draft REPLACES the previous attempt instead of leaving a
+    trail of superseded drafts on the Case. A support agent opening the record
+    should see one current draft, not the model's working.
+    """
+    sf = get_connection()
+
+    truncated = len(body) > COMMENT_MAX_CHARS
+    if truncated:
+        keep = body[: COMMENT_MAX_CHARS - 40].rsplit(" ", 1)[0]
+        body = keep + "\n\n[truncated at 4000 characters]"
+
+    sf.CaseComment.update(comment_id, {"CommentBody": body})
+    return {"truncated": truncated}
+
+
+def fetch_case_by_id(case_id: str) -> dict | None:
+    """Query one Case by its 15/18-character Id, or None.
+
+    The LWC knows `recordId`, not CaseNumber, so this is the lookup the chat
+    endpoint needs.
+    """
+    sf = get_connection()
+    safe = case_id.replace("'", r"\'")
+    soql = f"SELECT {CASE_FIELDS} FROM Case WHERE Id = '{safe}' LIMIT 1"
+    records = sf.query_all(soql)["records"]
+    return _normalise_case(records[0]) if records else None

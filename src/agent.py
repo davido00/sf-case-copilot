@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain_anthropic import ChatAnthropic
 
-from tools import ALL_TOOLS
+from tools import ALL_TOOLS, READ_TOOLS
 
 # Load .env here, in the module that actually builds the model. Step 2 got the
 # key by accident -- it imported step1_raw_claude, which happened to call
@@ -41,7 +41,8 @@ When given a case number, follow this procedure:
 2. Call search_knowledge_articles using the case's symptoms and any error
    messages as the query.
 3. Write a resolution draft grounded in the article content you retrieved.
-4. Call draft_resolution to save it against the case.
+4. Call draft_resolution to save it against the case. Call it ONCE. Do not
+   re-draft or call it again unless the tool reports an error.
 
 Rules for the draft:
 - Open by restating the problem so the customer knows they were understood.
@@ -56,21 +57,102 @@ this problem and that the case should be escalated to a specialist. Do not call
 draft_resolution in that situation."""
 
 
-def build_agent():
+def build_agent(checkpointer=None):
     """Assemble the agent: a model, a set of tools, and instructions.
 
     Returns a graph object with the same `.invoke()` you have used since
     Step 2 -- the uniform interface again.
+
+    Pass a CHECKPOINTER to give the agent memory. LangGraph then stores the
+    message list per `thread_id` and reloads it on the next call, so a web
+    client can hold a conversation without shipping the whole history back
+    every turn. `chat.py` does the same job by hand with a Python list; this
+    is the version that survives being behind an HTTP endpoint.
     """
     llm = ChatAnthropic(model=MODEL, max_tokens=16000)
-    return create_agent(model=llm, tools=ALL_TOOLS, system_prompt=SYSTEM_PROMPT)
+    return create_agent(
+        model=llm,
+        tools=ALL_TOOLS,
+        system_prompt=SYSTEM_PROMPT,
+        checkpointer=checkpointer,
+    )
 
 
-def run(agent, user_request: str) -> dict:
-    """Run the agent once and return its full final state.
+def run(agent, user_request: str, thread_id: str | None = None) -> dict:
+    """Send one message to the agent and return its full final state.
 
     The result contains `messages` -- the ENTIRE conversation, including every
     tool call and tool result. That list is the loop's own audit trail, which
     is what step5_agent.py prints.
+
+    With a `thread_id` (and an agent built with a checkpointer), earlier turns
+    on that thread are loaded automatically, so you send only the NEW message.
     """
-    return agent.invoke({"messages": [{"role": "user", "content": user_request}]})
+    config = {"configurable": {"thread_id": thread_id}} if thread_id else None
+    return agent.invoke(
+        {"messages": [{"role": "user", "content": user_request}]},
+        config=config,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chat mode (in-org build)
+#
+# Different job from the one-shot drafting agent above. Here a human is in the
+# loop, so the agent converses instead of executing a fixed procedure, and it
+# has NO write tools -- the person decides when to commit, and Apex does the
+# writing. An agent that cannot write cannot write the wrong thing.
+# ---------------------------------------------------------------------------
+
+CHAT_SYSTEM_PROMPT = """You are a Salesforce support engineer helping a colleague
+work on a support case. You are talking to the support agent, not to the customer.
+
+The case you are working on:
+
+{case_block}
+
+How to work:
+- You ALREADY have this case's details above. Never call get_case for it. Use
+  get_case only if asked about some OTHER case by number.
+- Search the Knowledge Base before proposing any troubleshooting steps, and base
+  those steps on what you retrieve. Cite the article number you used.
+- If the Knowledge Base has nothing relevant, say so plainly and recommend
+  escalation. Do NOT fall back on general knowledge and present it as grounded.
+- When asked for a customer reply, write the reply itself, ready to send.
+- Keep answers tight. This is a working conversation, not a report.
+
+You CANNOT write to Salesforce. You have read access only. When your colleague is
+happy with a draft they will save it themselves using the Save to Case button, so
+present drafts in the conversation and never claim to have saved anything."""
+
+
+def case_block(case: dict) -> str:
+    """Format a Case for the chat system prompt.
+
+    Putting the case in the prompt rather than making the agent fetch it saves a
+    tool call on every single conversation -- the LWC already knows which record
+    it is on, so asking the model to go and look it up is wasted latency.
+    """
+    return (
+        f"Case Number: {case['CaseNumber']}\n"
+        f"Subject: {case['Subject']}\n"
+        f"Status: {case['Status']} | Priority: {case['Priority']}\n"
+        f"Type: {case['Type']} / {case['Reason']}\n"
+        f"Account: {case['AccountName']}\n"
+        f"Contact: {case['ContactName']} <{case['ContactEmail']}>\n\n"
+        f"Description:\n{case['Description']}"
+    )
+
+
+def build_chat_agent(case: dict):
+    """A read-only agent that already knows which case it is working on.
+
+    Built per request -- it costs under 2ms, and it means the case details live
+    in the system prompt rather than being re-fetched or carried in history.
+    """
+    llm = ChatAnthropic(model=MODEL, max_tokens=16000)
+    return create_agent(
+        model=llm,
+        tools=READ_TOOLS,
+        system_prompt=CHAT_SYSTEM_PROMPT.format(case_block=case_block(case)),
+    )

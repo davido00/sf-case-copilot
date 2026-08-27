@@ -154,17 +154,29 @@ def save_draft(case_number: str, draft_text: str) -> dict:
     if using_salesforce():
         import sf_client
 
+        # If we already wrote a comment for this case, UPDATE it rather than
+        # adding another. The agent sometimes re-drafts after reading its own
+        # word count, and without this each attempt leaves a superseded draft
+        # on the record. One case, one current draft.
+        existing = _SAVED.get(case_number, {}).get("comment_id")
+
         try:
-            result = sf_client.create_case_comment(case["Id"], draft_text)
+            if existing:
+                result = sf_client.update_case_comment(existing, draft_text)
+                comment_id, verb = existing, "Updated"
+            else:
+                result = sf_client.create_case_comment(case["Id"], draft_text)
+                comment_id, verb = result["id"], "Saved as"
         except Exception as exc:
             # Surface the org's own message -- it names the field or rule that
             # rejected the write, which is what a person needs to fix it.
             return {"ok": False, "detail": f"Salesforce rejected the write: {exc}"}
 
-        _SAVED[case_number] = {"text": draft_text, "comment_id": result["id"]}
+        _SAVED[case_number] = {"text": draft_text, "comment_id": comment_id}
         detail = (
-            f"Saved as an internal Case Comment on case {case_number} "
-            f"(comment {result['id']}, not visible to the customer)."
+            f"{verb} an internal Case Comment on case {case_number} "
+            f"(comment {comment_id}, not visible to the customer). "
+            "Re-drafting again will replace this same comment, not add another."
         )
         if result["truncated"]:
             detail += " NOTE: the draft exceeded 4000 characters and was truncated."
@@ -180,3 +192,28 @@ def save_draft(case_number: str, draft_text: str) -> dict:
 def saved_drafts() -> dict[str, dict]:
     """Everything saved this session, for the CLI to display."""
     return _SAVED
+
+
+def forget_draft(case_number: str) -> None:
+    """Drop our record of a saved draft, so the next save creates a NEW comment.
+
+    The service calls this before each request. Within one agent run, re-drafting
+    should replace the comment it just wrote; a fresh request from a user who
+    clicked the button again should leave a new one rather than silently
+    overwriting what a colleague is reading.
+    """
+    _SAVED.pop(case_number, None)
+
+
+def get_case_by_id(case_id: str) -> dict | None:
+    """One Case by its Salesforce Id, or None. The chat endpoint uses this."""
+    if using_salesforce():
+        import sf_client
+
+        return sf_client.fetch_case_by_id(case_id)
+
+    for case in list_cases():
+        # Match 15-char Ids against our 18-char mock Ids too.
+        if case["Id"] == case_id or case["Id"].startswith(case_id):
+            return case
+    return None

@@ -102,10 +102,19 @@ def draft_resolution(case_number: str, draft_text: str) -> str:
         # with a shorter draft or a corrected case number.
         return result["detail"]
 
-    words = len(draft_text.split())
-    return f"{result['detail']} ({words} words, pending agent review.)"
+    # Deliberately does NOT report the word count. Handing the model a number
+    # next to a "stay under 250 words" instruction invites it to re-draft over
+    # and over chasing the target -- observed four times on one case, tripling
+    # latency for a marginally different draft. Report success, not a metric.
+    return result["detail"]
 
 
 # The list we hand to the agent. Order does not matter to the model -- it picks
 # by docstring, not by position.
 ALL_TOOLS = [get_case, search_knowledge_articles, draft_resolution]
+
+
+# Read-only subset, for the chat panel. The agent converses and drafts in the
+# conversation; the human decides when to commit, and Apex does the write.
+# Handing the model a write tool it should not use is an invitation to use it.
+READ_TOOLS = [get_case, search_knowledge_articles]

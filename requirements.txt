@@ -11,5 +11,13 @@ langchain-anthropic>=1.6
 # Step 6 — Salesforce
 simple-salesforce>=1.12
 
+# In-org build, phase 1 — HTTP service so Salesforce can call the agent
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# In-org build, phase 2 — JWT bearer flow for the Connected App
+pyjwt>=2.9
+cryptography>=43.0
+
 # Added in later steps (uncommented as we get there):
 # pytest>=8.0               # tests

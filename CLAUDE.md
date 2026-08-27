@@ -11,6 +11,19 @@ Built as interview prep for a **Forward Deployed Engineer (FDE)** role at Salesf
 tool-calling, RAG, and Salesforce integration — from the perspective of an experienced
 Salesforce developer who is new to Python and LLMs.
 
+## Positioning — do not lose this framing
+
+This is **deliberately the raw, hand-built version, not a recommended architecture.**
+The enterprise answer is Agentforce for orchestration and actions, grounded on
+Data Cloud / Data 360. The owner knows that; building it by hand first is the point.
+
+This matters for how the project is presented. Describing this stack as the *right*
+way to ship would read as a gap in Salesforce platform knowledge. Framing it as
+"I built the raw version to understand what Agentforce abstracts away" reads as
+senior instinct. **Never write copy that presents this as best-practice
+architecture.** The README's "Why I built this the hard way" section — including
+the hand-built → platform mapping table — carries that framing; keep it intact.
+
 ## Working style for this repo
 
 The owner is an experienced Salesforce dev but **new to Python and LLM development**. So:
@@ -145,6 +158,37 @@ Writes go through `data_store.save_draft()`, the same seam as reads — mock mod
 keeps drafts in a dict, Salesforce mode creates the comment. Verified live on case
 00001026 (comment `00ad200000KhAbjAAF`, `IsPublished: False`), and verified that a
 case with no matching article writes **nothing**.
+
+## The HTTP service (in-org build, phase 1)
+
+`service/app.py` wraps the agent for Salesforce to call. `POST /draft
+{case_number}` and `GET /health`. Nothing in `src/` changed to make this work.
+
+- **`COPILOT_SHARED_SECRET` is required** — the service refuses to start without
+  it rather than defaulting to unauthenticated. The Phase 3 tunnel URL is public.
+- **A refusal is a 200, not an error.** `drafted: false` with the agent's reasoning
+  in `summary`. The LWC must show that differently from a failure — it means the
+  system worked and had nothing to say.
+- **Each request calls `data_store.forget_draft()` first**, so a second button
+  click leaves a new comment instead of overwriting one a colleague is reading.
+
+### Two defects found by running it, both fixed
+
+**Duplicate comments.** The agent re-drafts sometimes, and `draft_resolution`
+always created a *new* CaseComment — one run left four drafts on one Case. Now
+`save_draft` UPDATES the comment it already wrote within a run. Keep that.
+
+**A self-critique loop I caused.** The tool used to return the draft's word count,
+next to a system prompt saying "under 250 words". The model chased the target,
+re-drafting four times: 51.8s instead of 22.1s for a marginally different draft.
+Fixed by removing the word count from the tool response and saying "call it ONCE"
+in the prompt. **Do not put metrics in a tool's success message** — the model will
+optimise against them.
+
+### Measured latency (live org, Opus 5)
+
+~22s with an article, ~17s when refusing. The Apex callout ceiling is 120s, so
+sync works — but it was 51s before the fix, which is how close this gets.
 
 ## The agent (Step 5)
 
