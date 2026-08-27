@@ -24,9 +24,15 @@ public with sharing class CaseCopilotService {
      *  never in this file — that is the whole point of the feature. */
     private static final String ENDPOINT = 'callout:Case_Copilot';
 
-    /** 120s is the Apex maximum. The agent typically answers in 8-25s, but the
-     *  first call after the free tier sleeps has to wake the instance first. */
-    private static final Integer TIMEOUT_MS = 120000;
+    /**
+     * Per-attempt timeout, deliberately NOT the 120s Apex maximum.
+     *
+     * Apex allows 120 seconds of callout time per TRANSACTION, not per call.
+     * Two attempts at 55s fit inside that; one attempt at 120s leaves no room
+     * to retry. Since the agent normally answers in 8-25s, two shorter attempts
+     * cover more failure modes than one long one.
+     */
+    private static final Integer TIMEOUT_MS = 55000;
 
     /** Long Text Area limit on AI_Draft_Resolution__c. */
     private static final Integer MAX_RESOLUTION_CHARS = 32768;
@@ -90,19 +96,7 @@ public with sharing class CaseCopilotService {
         request.setTimeout(TIMEOUT_MS);
         request.setBody(JSON.serialize(payload));
 
-        HttpResponse response;
-        try {
-            response = new Http().send(request);
-        } catch (CalloutException e) {
-            // Usually a missing Remote Site / Named Credential, or the service
-            // being unreachable. Say which, because the raw message rarely does.
-            throw new CopilotException(
-                'Could not reach the copilot service. Check the Case_Copilot ' +
-                'Named Credential is correct and the service is running. (' +
-                e.getMessage() + ')'
-            );
-        }
-
+        HttpResponse response = sendWithRetry(request);
         Integer status = response.getStatusCode();
 
         if (status == 401) {
@@ -179,6 +173,47 @@ public with sharing class CaseCopilotService {
     }
 
     // -----------------------------------------------------------------------
+
+    /**
+     * Send the request, retrying once on a gateway-level failure.
+     *
+     * The service is on a free tier that sleeps after ~15 minutes idle. A
+     * waking instance can answer 502/503/504 rather than simply being slow, so
+     * the first message after a quiet period fails for a reason that has
+     * nothing to do with the request. Retrying costs one extra attempt and
+     * turns that into a slow success.
+     *
+     * Only gateway errors are retried. A 401 or a 404 will fail identically the
+     * second time, and retrying a 500 the agent itself raised just doubles the
+     * bill.
+     */
+    private static HttpResponse sendWithRetry(HttpRequest request) {
+        for (Integer attempt = 1; attempt <= 2; attempt++) {
+            try {
+                HttpResponse response = new Http().send(request);
+                Integer status = response.getStatusCode();
+
+                Boolean wakingUp = status == 502 || status == 503 || status == 504;
+                if (wakingUp && attempt == 1) {
+                    continue;
+                }
+                return response;
+            } catch (CalloutException e) {
+                if (attempt == 2) {
+                    // Usually a missing Named Credential, a wrong URL, or the
+                    // service genuinely being down. Name the suspects, because
+                    // the raw message rarely does.
+                    throw new CopilotException(
+                        'Could not reach the copilot service after two attempts. Check the ' +
+                        'Case_Copilot Named Credential URL and that the service is running. (' +
+                        e.getMessage() + ')'
+                    );
+                }
+            }
+        }
+        // Unreachable: the loop either returns or throws.
+        throw new CopilotException('Could not reach the copilot service.');
+    }
 
     /** Turn the LWC's history JSON into something we can put in the payload. */
     private static List<Object> parseHistory(String historyJson) {

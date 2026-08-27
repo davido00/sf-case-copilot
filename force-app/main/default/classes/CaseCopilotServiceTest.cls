@@ -39,6 +39,37 @@ private class CaseCopilotServiceTest {
         }
     }
 
+    /** Fails the first call with a gateway error, then succeeds. */
+    private class ColdStartResponder implements HttpCalloutMock {
+        private Integer calls = 0;
+
+        public HttpResponse respond(HttpRequest request) {
+            calls++;
+            HttpResponse response = new HttpResponse();
+            if (calls == 1) {
+                response.setStatusCode(503);
+                response.setBody('<html>Service Unavailable</html>');
+            } else {
+                response.setStatusCode(200);
+                response.setBody('{"reply":"Awake now.","tools_called":[]}');
+            }
+            return response;
+        }
+    }
+
+    /** Fails every time, to prove we stop at two attempts. */
+    private class AlwaysDownResponder implements HttpCalloutMock {
+        public Integer calls = 0;
+
+        public HttpResponse respond(HttpRequest request) {
+            calls++;
+            HttpResponse response = new HttpResponse();
+            response.setStatusCode(503);
+            response.setBody('down');
+            return response;
+        }
+    }
+
     private static Case makeCase() {
         Case record = new Case(Subject = 'Cannot log in', Description = 'Password reset did not help');
         insert record;
@@ -151,6 +182,41 @@ private class CaseCopilotServiceTest {
         Test.stopTest();
 
         System.assert(threw, 'Malformed history should be caught before the callout');
+    }
+
+    @IsTest
+    static void sendChatMessage_retriesAfterColdStart() {
+        Case record = makeCase();
+        Test.setMock(HttpCalloutMock.class, new ColdStartResponder());
+
+        Test.startTest();
+        CaseCopilotService.ChatReply result = CaseCopilotService.sendChatMessage(record.Id, '[]', 'hello');
+        Test.stopTest();
+
+        System.assertEquals(
+            'Awake now.',
+            result.reply,
+            'A 503 on the first attempt should be retried, not surfaced as an error'
+        );
+    }
+
+    @IsTest
+    static void sendChatMessage_givesUpAfterSecondFailure() {
+        Case record = makeCase();
+        AlwaysDownResponder mock = new AlwaysDownResponder();
+        Test.setMock(HttpCalloutMock.class, mock);
+        Boolean threw = false;
+
+        Test.startTest();
+        try {
+            CaseCopilotService.sendChatMessage(record.Id, '[]', 'hello');
+        } catch (AuraHandledException e) {
+            threw = true;
+        }
+        Test.stopTest();
+
+        System.assert(threw, 'A persistently failing service should surface an error');
+        System.assertEquals(2, mock.calls, 'Should try exactly twice, not loop');
     }
 
     @IsTest

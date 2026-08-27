@@ -1,0 +1,102 @@
+<template>
+    <lightning-card title="Case Copilot" icon-name="utility:einstein">
+        <lightning-button
+            slot="actions"
+            label="Clear"
+            variant="neutral"
+            onclick={handleClear}
+            disabled={isThinking}
+        ></lightning-button>
+
+        <div class="slds-var-p-horizontal_small">
+            <!-- conversation -->
+            <div class="log" data-scroll="log">
+                <template lwc:if={hasMessages}>
+                    <template for:each={decoratedMessages} for:item="msg">
+                        <div key={msg.id} class={msg.rowClass}>
+                            <div class={msg.cssClass}>
+                                <lightning-formatted-text
+                                    value={msg.text}
+                                ></lightning-formatted-text>
+
+                                <template lwc:if={msg.isAssistant}>
+                                    <div class="meta">
+                                        <template lwc:if={msg.toolNote}>
+                                            <span class="tool-note">{msg.toolNote}</span>
+                                        </template>
+                                        <lightning-button
+                                            label="Save to Case"
+                                            variant="base"
+                                            class="save-btn"
+                                            data-id={msg.id}
+                                            onclick={handleSave}
+                                            disabled={msg.isSaving}
+                                        ></lightning-button>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </template>
+
+                <template lwc:else>
+                    <div class="empty">
+                        Ask about this case — for example
+                        <em>"what should I check first?"</em> or
+                        <em>"draft a reply for the customer"</em>.
+                    </div>
+                </template>
+
+                <!-- thinking indicator -->
+                <template lwc:if={isThinking}>
+                    <div class="row row_agent">
+                        <div class="bubble bubble_agent thinking">
+                            <lightning-spinner
+                                alternative-text="Thinking"
+                                size="small"
+                                variant="brand"
+                            ></lightning-spinner>
+                            <span class="thinking-text">Copilot is thinking…</span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- errors -->
+            <template lwc:if={hasError}>
+                <div class="slds-var-m-top_x-small">
+                    <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error" role="alert">
+                        <span class="slds-assistive-text">Error</span>
+                        <lightning-icon
+                            icon-name="utility:error"
+                            size="x-small"
+                            variant="inverse"
+                            class="slds-var-m-right_x-small"
+                        ></lightning-icon>
+                        {errorMessage}
+                    </div>
+                </div>
+            </template>
+
+            <!-- composer -->
+            <div class="composer slds-var-m-top_small slds-var-m-bottom_small">
+                <lightning-textarea
+                    label="Message"
+                    variant="label-hidden"
+                    placeholder="Ask the copilot about this case…"
+                    value={draft}
+                    onchange={handleInput}
+                    onkeydown={handleKeyDown}
+                    class="composer-input"
+                ></lightning-textarea>
+                <lightning-button
+                    label="Send"
+                    variant="brand"
+                    onclick={handleSend}
+                    disabled={isSendDisabled}
+                    class="slds-var-m-top_x-small"
+                ></lightning-button>
+            </div>
+        </div>
+    </lightning-card>
+</template>

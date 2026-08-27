@@ -218,6 +218,35 @@ It is also the **reference implementation for the LWC** — keep a list of
 `{role, content}`, send it all each turn, append the reply. That is the whole
 protocol.
 
+## In the org (in-org build, phases 3-5)
+
+`force-app/` is an SFDX project deployed to the **copilot** org
+(`david.ngo0311@resourceful-badger-urst9u.com`).
+
+- `CaseCopilotService.cls` — `sendChatMessage` (callout) and
+  `saveResolutionToCase` (the only write in the flow, and only on a click).
+- `caseCopilot` LWC — chat panel on the Case record page. The component owns the
+  conversation and sends it in full each turn, exactly like `service/try_chat.py`.
+- 12 Apex tests, all passing.
+
+### Apex gotchas worth keeping
+
+**`AuraHandledException.setMessage()` only works in a VisualForce/Aura context.**
+From Execute Anonymous it throws `LimitException` — and it did, masking a real
+HTTP failure while pretending to report it. So the logic throws
+`CopilotException` and only the thin `@AuraEnabled` wrappers convert it. Keep
+that split; it is what makes the class debuggable outside a UI.
+
+**Timeout is 55s per attempt, not the 120s maximum.** Apex allows 120s of callout
+time per *transaction*, so two attempts at 55s fit and one at 120s leaves no room
+to retry. `sendWithRetry` retries once on 502/503/504 only — a cold Render
+instance answers with a gateway error rather than merely being slow. 401 and 404
+are not retried; they would fail identically.
+
+**The `sf` CLI (2.95.x) reports `MetadataTransferError: Missing message
+metadata.transfer:Finalizing`** on deploys that actually SUCCEEDED. Check with
+`sf project deploy report --use-most-recent` before believing it failed.
+
 ## The agent (Step 5)
 
 `create_agent` (LangChain 1.x, LangGraph underneath) writes the tool loop.
